@@ -1,0 +1,100 @@
+What happened?
+
+1. Create a table in DB for storing questions.
+2. Using some open source API, gather questions and manually insert them in DB.
+3. Create CRUD operation for questions.
+4. Create quiz
+	1. No need to manually create quiz table and mapping table in DB. They will be auto-created in the next run of the
+	   application when we create the entities and add the required annotations like @ManyToMany, @Entity, etc.
+
+	   Note: We do not have to manually create these tables. We just code in the entities and they are auto created
+	   in the next run of the application.
+
+	2. This part is a bit tricky. See how the SQL works in @Query annotation in QuizService. Also look at @ManyToMany.
+		1. In the SQL query, we use colon operator to mention outside variables of java within it.
+		2. What is nativeQuery here?
+	3. One table is quiz table. The second is a mapping table for mapping quiz and questions.
+	4. Why 2 tables were created? Because this is a many-many mapping.
+	5. Why is this not a one-many mapping? One quiz has many questions right?
+		1. When deciding between the 4 mappings : one-one, one-many, many-one, many-many, always think from both
+			side. Does one quiz have many questions? Can one question be on many quiz?
+		2. Since answer is yes to both questions, we have many-many mapping here.
+
+
+Fetching a quiz
+1. Instead of returning a quiz object, we return only the list of questions.
+2. We do not need to include the correct answer, difficulty, category in this request.
+3. So, we create a new entity QuestionWrapper without those fields.
+4. In QuizService, we get the quiz and store it in Optional - otherwise compiler error because Dao might return null if
+   no entry is found in the DB for the given ID.
+5. Now, we manually copy all required fields from fetcher Questions to QuestionWrappers.
+
+
+Submitting quiz and evaluating the score (/submit)
+1. Instead of checking if chosen option is correct answer or not, check if the value of chosen option is same as the
+    value of correct answer.
+2. The id of question if going to be in the path and the responses to each question will in the request body - so here,
+    we have @PathVariable and @ResponseBody for the same function in the arguments list.
+3. We have to create a new class QuizResponse for ORM of the responses sent to server. We use @RequiredArgsConstructor
+    to make both default and all params constructor available through lombok.
+4. Calculating quiz score is business logic - so we do it in service layer.
+
+Converting to Microservices
+1. Must makes separate the app into QuizService and QuestionService (not the classes in service layer but microservices).
+2. QuizService must talk to QuestionService via HTTP/REST request to create a quiz.
+3. QuizService must again talk to QuestionService to evaluate the result of a quiz.
+4. If we have both as separate services, then they will likely be replicated in multiple servers. How do we find the
+    IP addresses? How we select which server must also depend on load balancing.
+5. So, we need an API gateway with maybe a service discovery/registry service.
+6. What if question service is down when quiz service wants to talk to it? We have to do "failed fast" - which is used
+    to tell the client that a service is not responding so that the client can explore alternative options. Here, the
+    client is Quiz Service. Circuit breaker!
+7. Every microservice is a separate project in the IDE!
+8. Client (user) will not interact with QuestionMS. Client will send request to QuizMS only.
+9. Dependencies: JPA, PostgreSQL Driver, Web, Lombok, OpenFeign, Eureka Discovery Client
+10. Initially comment out OpenFeign and Eureka in pom.xml.
+11. Separate DBs must be created for each service.
+
+--------------------------------------------------------------------------------------------------------
+
+######### Notes for Question MicroService #########
+1. We have to create a separate DB for each service. Obviously, one service cannot access the DB of the other service.
+2. Evaluating score happened in the QuizService class of the monolithic implementation. However, since the answers are
+    Question DB, we need to calculate score in the Question MicroService (MS).
+
+Generating a Quiz - What happens in Question MS?
+1. The QuizMS will send a /generate request to QuestionMS.
+2. The Quiz MS does not need to know all the data of the questions. It only need the IDs of the questions randomly
+    picked for it to store in the mapping table.
+3. So, it is enough if we return an list of IDs to Quiz MS's generate quiz request.
+4. So, we change the SQL query here - no need for "select *" as we only need IDs. So, "select id" is enough.
+
+Handling request for questions
+1. When a get request for quiz is received, QuizMS must call QuestionMS to get the questions.
+2. Here, we need to send a list of QuestionWrapper because no one else needs to know the right answers.
+3. It is a post request because we are sending data (list of IDs) to the server.
+
+    NOTE: See when to use post and get.
+
+
+Calculating Score
+1. This is a post request because we are sending answers of a user to the server to get the score.
+
+
+CREATING MULTIPLE INSTANCES OF A MS (We run them on different ports)
+1. Near run button in IntelliJ, we have name of the app. Click on it and choose Edit Configurations.
+2. Every project will have a default config automatically created at port 8080.
+3. Click on default config and click copy button at the top-left toolbar of the dialog box.
+4. Change the name if needed.
+5. In the new config, in the Build and Run section, choose Modify Options --> Add VM options.
+6. Now the box near SDK version of java will not be disabled anymore. It is just below the Modify options button.
+7. In this box, type: -Dserver.port=8081. Click apply/save and the dialog will close.
+8. Now, again on the button near the run button where app name is displayed, click on to see all configurations.
+9. Choose each one and run it.
+
+
+######### Notes for Quiz MicroService #########
+1. We want this MS to:
+    1. Create quiz
+    2. Get a created quiz
+    3. Get score
