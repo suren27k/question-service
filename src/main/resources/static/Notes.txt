@@ -98,3 +98,112 @@ CREATING MULTIPLE INSTANCES OF A MS (We run them on different ports)
     1. Create quiz
     2. Get a created quiz
     3. Get score
+2. For create quiz, we need to send a request from QuizMS to QuestionMS. This is done via REST Template.
+3. RestTemplate is a class in spring framework.
+4. At this point, we do not want to hardcode the port numbers or URLs or IP address in to our java code.
+5. So, we turn to the previously commented out 2 dependencies: Eureka and OpenFeign.
+
+
+~~~~~~~~~~~~~ Setting Up Eureka ~~~~~~~~~~~~~
+1. Service Discovery.
+2. All MS must register themselves to the Eureka Server. It happens automatically when we have a eureka server and if
+    all MS have the Eureka Client dependency. No need to manually guide the client to register with the server.
+3. One MS can lookup the address of another MS using a Eureka Client. So, include client dependency in every MS that
+    needs to communicate with other MS.
+4. So, create another project for Eureka Server and add 2 dependency: web, Eureka Server.
+5. Add @EnableEurekaServer in main application java file below @SpringBootApplication.
+6. Look at application properties for configs.
+7. By default it runs on port 8761, but add it anyway in application properties.
+8. Run it and go to localhost:8761 and see all the details of the Eureka Server.
+9. Now register the QuestionMS with this Eureka Server:
+    1. Uncomment the 2 dependencies. Run it.
+    2. Now, in the eureka server, we can see an application registered with name "Unknown".
+    3. In log (console) of QuestionMS, we can see an entry at the last regarding this.
+    4. Add a name for QuestionMS in application properties using spring.application.name property.
+    5. Now the name would have changed in the eureka server. Note how availability Zones is 1.
+    6. Now run the second instance of question service. Now availability zones will be 2 in eureka server.
+    7. It automatically knows that both are of the same instance.
+10. How can a service find another service using this service registry? OpenFeign comes into picture here.
+11. We want to get questions from QuestionMS for creating a quiz in QuizMS. That is the next step.
+
+~~~~~~~~~~~~~ OpenFeign ~~~~~~~~~~~~~
+1. Allows us to not hardcode everything in RestTemplate.
+2. Allows us to do only what we want to do. No unnecessary other code/configs.
+3. We create an interface for this purpose and related files are put in the package feign.
+4. In the interface:
+    1. Name it something appropriate.
+    2. Add @FeignClient and mention the name of the service it is going to connect to.
+    3. We want to connect to "QUESTION_SERVICE" --> all caps as shown in the eureka server.
+    4. Give declarations of the methods you are going to call in this interface - yes, we need to declare the methods
+        in question interface that we need to call, here in this interface.
+    5. We need three methods:
+        1. /generate --> for creating a quiz we need to get the questions.
+        2. /getQuestions --> when client requests a quiz, we need to get the questions for it.
+        3. /getScore --> we need to check if the answers chosen are correct answers.
+    6. For all the above endpoints, we have a corresponding method in QuestionMS -->  need to declare them here.
+    7. Add the main path URL to the mapping urls --> /question is the main path for questionMS. We need to add it to
+        mappings like /generate to make it question/generate.
+5. So, feign allows us to basically call a method of another MS, without using any rest request manually created at our
+    end. It looks for the value inside @FeignClient, and connects to it via the Eureka Server.
+6. Thus, with feign, we do not need to use RestTemplate.
+7. Add @EnableFeignClients in the main application java file.
+
+Continuing in QuizMS
+1. Previously, we were storing list of questions in quiz entity. That is no longer needed. So, change it to a list of
+    Integers to store the ids.
+2. @ManyToMany should not be used for a list of basic data type (integers here). So, change it to @ElementCollection.
+3. Since question table and quiz table are in different DBs, we are not storing references in DBs (no foreign keys).
+4. Make changes in application properties:
+    1. Give a name for the MS.
+    2. Set a different port number.
+5. Run the server, and now you can see it registered in eureka server. Can also see tables created in DB.
+6. Now, send a request from postman to /quiz/create with body having:
+    {"categoryName": "History", "noOfQuestions": 5, "title": "Quiz 1"}.
+7. For this request, quizMS will send use feign to send a request to /question/generate.
+8. If the request is successful, we can find the tables populated in DB.
+9. Note: If client-to-quizMS is a post request, should the quizMS-to-questionMS request be also post? Can we mix and
+    match? Check and verify.
+10. Call the other 2 methods and see if everything works.
+
+BUT!!! If multiple instances of QuestionMS were running, which one was called by feign in QuizMS for above request?
+Answer:
+    1. Feign takes care of it. Load balancer dependency is already included.
+    2. But how to verify it? We use the Environment class of spring framework (not hibernate).
+    3. Check the code in Question Controller of QuestionMS inside the getQuestionsForQuiz() method.
+    4. Make sure the click the send button in postman rapidly for a few times to see the effect.
+
+
+------------- API Gateway -------------
+1. User should not have to login for every MS in an application.
+2. We move some cross cutting concerns to this API Gateway to make the app seamless.
+3. Create a new project with 2 dependencies: Gateway, eureka client.
+4. Open it and give it a name and a different port number.
+    1. We have 2 instance of QuestionMS running on 8080, 8081.
+    2. We have QuizMS running on 8090.
+    3. We have Eureka Server running on 8761.
+    4. Give API Gateway port number as 8765.
+5. Start the server.
+6. Now, we have to send every request to port 8765 only. All requests go to the API gateway.
+7. BUT How does API Gateway know to which service it must forward a request?
+    1. We have to include the service name in the request URL.
+    2. Instead of sending a request to http://localhost:8090/quiz/get/1  we must send it to the following URL
+        http://localhost:8765/QUIZ-SERVICE/quiz/get/1
+    3. Notice the port numbers, service name as seen in the eureka server.
+    4. Having both Gateway and eureka client dependencies mean they automatically communicate.
+    5. But we need to enable the API Gateway access to the eureka server via a config in application properties.
+        The property is "spring.cloud.gateway.discovery.locator.enabled=true"
+    6. So need to say QUIZ-SERVICE means QuizMS to the API Gateway. It is automatic!
+    7. If we want to not use uppercase letters in URL for the service name, we can add another config which allows that
+        to happen:  "spring.cloud.gateway.discovery.locator.lower-case-service-id=true".
+    8. After the above change, we can send request to URL:  http://localhost:8765/quiz-service/quiz/get/1
+    9. It is possible to not mention the service name at all in the URL. Lookup ways to do that.
+8. So:
+    1. A browser or postman client sends a request to APi Gateway.
+    2. API Gateway finds the service via Eureka Server and forwards the request to it.
+    3. The Quiz Service will then depend on the included load balancer dependency to send request to the QuestionMS
+        instance which is free or has better availability at the time.
+
+
+
+
+
